@@ -53,14 +53,16 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# CORS middleware
+# CORS middleware - UPDATED FOR DEPLOYMENT
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173", 
         "http://127.0.0.1:5173",
         "http://localhost:3000",
-        "http://127.0.0.1:3000"
+        "http://127.0.0.1:3000",
+        "https://chefs-cam.vercel.app",
+        "https://*.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -110,10 +112,11 @@ def root():
     return {
         "message": "Smart Recipe Generator API",
         "version": "1.0.0",
+        "status": "healthy",
         "endpoints": {
             "auth": ["/auth/register", "/auth/login", "/auth/me", "/auth/delete"],
             "recipes": ["/recipes", "/recipes/search", "/recipes/{id}", "/recipes/{id}/favorite", "/recipes/{id}/rate"],
-            "user": ["/favorites", "/recommendations", "/profile/stats"],
+            "user": ["/favorites", "/recommendations"],
             "analysis": ["/analyze/image"],
             "info": ["/stats", "/popular", "/health"]
         }
@@ -165,7 +168,7 @@ def delete_current_user(current_user: models.User = Depends(get_current_user), d
     except Exception as e:
         raise HTTPException(status_code=500, detail="Failed to delete account")
 
-# Recipe endpoints - UPDATED WITH USER-SPECIFIC DATA
+# Recipe endpoints
 @app.post("/recipes/search")
 def search_recipes(
     ingredients: List[str] = Form(...),
@@ -180,11 +183,15 @@ def search_recipes(
         if not ingredients:
             raise HTTPException(status_code=400, detail="At least one ingredient is required")
         
-        # Pass user_id to search function if user is authenticated
-        user_id = user.id if user else None
-        recipes = services.search_recipes_by_ingredients(
-            db, ingredients, dietary_preferences, user_id=user_id
-        )
+        recipes = services.search_recipes_by_ingredients(db, ingredients, dietary_preferences)
+        
+        # Add user-specific data if user is authenticated
+        if user:
+            user_favorites = services.get_user_favorites(db, user.id)
+            favorite_recipe_ids = {recipe['id'] for recipe in user_favorites}
+            
+            for recipe in recipes:
+                recipe['is_favorited'] = recipe['id'] in favorite_recipe_ids
         
         return {"recipes": recipes}
     
@@ -205,13 +212,18 @@ def get_all_recipes(
     Get all recipes with optional filtering
     """
     try:
-        user_id = user.id if user else None
-        recipes = services.get_filtered_recipes(
-            db, dietary, difficulty, cuisine, cooking_time, user_id=user_id
-        )
+        recipes = services.get_filtered_recipes(db, dietary, difficulty, cuisine, cooking_time)
         
         # Apply limit
         recipes = recipes[:limit]
+        
+        # Add user-specific data if user is authenticated
+        if user:
+            user_favorites = services.get_user_favorites(db, user.id)
+            favorite_recipe_ids = {recipe['id'] for recipe in user_favorites}
+            
+            for recipe in recipes:
+                recipe['is_favorited'] = recipe['id'] in favorite_recipe_ids
         
         return {"recipes": recipes}
     
@@ -229,10 +241,25 @@ def get_recipe(
     Get a specific recipe by ID with optional serving size adjustment
     """
     try:
-        user_id = user.id if user else None
-        recipe = services.get_recipe_with_adjusted_servings(db, recipe_id, servings, user_id=user_id)
+        recipe = services.get_recipe_with_adjusted_servings(db, recipe_id, servings)
         if not recipe:
             raise HTTPException(status_code=404, detail="Recipe not found")
+        
+        # Add user-specific data if user is authenticated
+        if user:
+            # Check if recipe is favorited
+            favorite = db.query(models.Favorite).filter(
+                models.Favorite.user_id == user.id,
+                models.Favorite.recipe_id == recipe_id
+            ).first()
+            recipe['is_favorited'] = favorite is not None
+            
+            # Get user's rating
+            user_rating = db.query(models.Rating).filter(
+                models.Rating.user_id == user.id,
+                models.Rating.recipe_id == recipe_id
+            ).first()
+            recipe['user_rating'] = user_rating.rating if user_rating else 0
         
         return recipe
     
@@ -256,43 +283,13 @@ def toggle_favorite(
         if not recipe:
             raise HTTPException(status_code=404, detail="Recipe not found")
         
-        # Toggle favorite and get new state
-        is_favorited = services.toggle_favorite(db, current_user.id, recipe_id)
-        
-        return {
-            "is_favorited": is_favorited,
-            "message": "Recipe favorited" if is_favorited else "Recipe unfavorited"
-        }
+        favorite = services.toggle_favorite(db, current_user.id, recipe_id)
+        return {"is_favorited": favorite is not None}
     
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to toggle favorite: {str(e)}")
-
-@app.post("/recipes/{recipe_id}/rate")
-def rate_recipe(
-    recipe_id: int,
-    rating: int = Query(..., ge=1, le=5, description="Rating from 1 to 5"),
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
-):
-    """
-    Rate a recipe (1-5 stars)
-    """
-    try:
-        # Update the rating in the database and get updated recipe
-        updated_recipe = services.rate_recipe(db, current_user.id, recipe_id, rating)
-        if not updated_recipe:
-            raise HTTPException(status_code=404, detail="Recipe not found")
-
-        return updated_recipe
-
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to rate recipe: {str(e)}")
 
 @app.get("/favorites")
 def get_favorites(
@@ -308,6 +305,53 @@ def get_favorites(
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch favorites: {str(e)}")
+
+@app.post("/recipes/{recipe_id}/rate", response_model=schemas.RecipeBase)
+def rate_recipe(
+    recipe_id: int,
+    rating: int = Query(..., ge=1, le=5, description="Rating from 1 to 5"),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """
+    Rate a recipe (1-5 stars)
+    """
+    try:
+        # Verify recipe exists
+        recipe = services.get_recipe_with_adjusted_servings(db, recipe_id)
+        if not recipe:
+            raise HTTPException(status_code=404, detail="Recipe not found")
+        
+        # Update the rating in the database
+        services.rate_recipe(db, current_user.id, recipe_id, rating)
+        
+        # Fetch the updated recipe with all details
+        updated_recipe = services.get_recipe_with_adjusted_servings(db, recipe_id)
+        if not updated_recipe:
+            # This should not happen if the previous check passed
+            raise HTTPException(status_code=404, detail="Recipe not found after rating")
+
+        # Add user-specific data
+        favorite = db.query(models.Favorite).filter(
+            models.Favorite.user_id == current_user.id,
+            models.Favorite.recipe_id == recipe_id
+        ).first()
+        updated_recipe['is_favorited'] = favorite is not None
+        
+        user_rating = db.query(models.Rating).filter(
+            models.Rating.user_id == current_user.id,
+            models.Rating.recipe_id == recipe_id
+        ).first()
+        updated_recipe['user_rating'] = user_rating.rating if user_rating else 0
+        
+        return updated_recipe
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to rate recipe: {str(e)}")
 
 # Recommendation endpoints
 @app.get("/recommendations")
@@ -340,21 +384,6 @@ def get_popular_recipes(
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get popular recipes: {str(e)}")
-
-# User profile endpoints
-@app.get("/profile/stats")
-def get_user_profile_stats(
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
-):
-    """
-    Get user profile statistics (favorite count, ratings, etc.)
-    """
-    try:
-        stats = services.get_user_profile_stats(db, current_user.id)
-        return stats
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get user stats: {str(e)}")
 
 # Analysis endpoints
 def analyze_image_with_gemini(image_bytes: bytes) -> List[str]:
@@ -452,6 +481,6 @@ if __name__ == "__main__":
     uvicorn.run(
         "main:app",
         host="0.0.0.0", 
-        port=8000,
-        reload=True
+        port=int(os.environ.get("PORT", 8000)),
+        reload=False
     )
