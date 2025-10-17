@@ -1,5 +1,5 @@
 # backend/main.py
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Query
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
@@ -18,6 +18,9 @@ import models
 import schemas
 import auth
 import services
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Get relative path for static files
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -170,9 +173,8 @@ def delete_current_user(current_user: models.User = Depends(get_current_user), d
 
 # Recipe endpoints
 @app.post("/recipes/search")
-def search_recipes(
-    ingredients: List[str] = Form(...),
-    dietary_preferences: Optional[List[str]] = Form([]),
+async def search_recipes(
+    request: Request,
     db: Session = Depends(get_db),
     user: Optional[models.User] = Depends(get_optional_user)
 ):
@@ -180,9 +182,25 @@ def search_recipes(
     Search recipes by ingredients with optional dietary preferences
     """
     try:
+        form = await request.form()
+        # Get ingredients (may be provided multiple times)
+        ingredients = form.getlist('ingredients') if hasattr(form, 'getlist') else form.get('ingredients')
+        dietary_preferences = form.getlist('dietary_preferences') if hasattr(form, 'getlist') else form.get('dietary_preferences')
+
+        # Normalize to lists
+        if ingredients is None:
+            ingredients = []
+        elif isinstance(ingredients, str):
+            ingredients = [ingredients]
+
+        if dietary_preferences is None:
+            dietary_preferences = []
+        elif isinstance(dietary_preferences, str):
+            dietary_preferences = [dietary_preferences]
+
         if not ingredients:
             raise HTTPException(status_code=400, detail="At least one ingredient is required")
-        
+
         recipes = services.search_recipes_by_ingredients(db, ingredients, dietary_preferences)
         
         # Add user-specific data if user is authenticated
@@ -196,7 +214,9 @@ def search_recipes(
         return {"recipes": recipes}
     
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+        logger.exception(f"Search endpoint error: {e}")
+        # Return empty results instead of 500 so frontend can handle gracefully
+        return {"recipes": []}
 
 @app.get("/recipes")
 def get_all_recipes(

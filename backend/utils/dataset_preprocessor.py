@@ -191,7 +191,8 @@ class DatasetPreprocessor:
                 if os.path.exists(self.images_dir):
                     local_path = os.path.join(self.images_dir, image_name)
                     if os.path.exists(local_path):
-                        return f"/static/{image_name}"
+                        # Return just the filename; services will construct the full static URL
+                        return image_name
                 else:
                     logger.warning(f"Images directory not found: {self.images_dir}")
 
@@ -210,7 +211,8 @@ class DatasetPreprocessor:
                 for img_path in available_images:
                     img_file = os.path.basename(img_path)
                     if sanitized_title in img_file.lower():
-                        return f"/static/{img_file}"
+                        # Return just filename for consistency; services will add base URL
+                        return img_file
         except Exception as e:
             logger.warning(f"Could not find image for '{title}': {e}")
 
@@ -261,6 +263,44 @@ class DatasetPreprocessor:
                 return cuisine.title()
         
         return 'International'
+
+    def _standardize_tags(self, tags: List[str]) -> List[str]:
+        """Return a standardized set of dietary tags with consistent formatting"""
+        if not tags:
+            return []
+
+        canonical = {
+            'vegetarian': 'Vegetarian',
+            'vegan': 'Vegan',
+            'gluten-free': 'Gluten-Free',
+            'gluten free': 'Gluten-Free',
+            'keto': 'Keto',
+            'paleo': 'Paleo',
+            'dairy-free': 'Dairy-Free',
+            'dairy free': 'Dairy-Free'
+        }
+
+        out = []
+        for t in tags:
+            if not t:
+                continue
+            key = t.strip().lower().replace('_', ' ').replace('-', ' ')
+            key = key.replace('\t', ' ')
+            key = key.strip()
+            if key in canonical:
+                out.append(canonical[key])
+            else:
+                # Title-case unknown tags
+                out.append(t.strip().title())
+
+        # Deduplicate while preserving order
+        seen = set()
+        result = []
+        for tag in out:
+            if tag not in seen:
+                seen.add(tag)
+                result.append(tag)
+        return result
     
     def _infer_dietary_tags(self, ingredients: List[Dict]) -> List[str]:
         """Infer dietary tags from ingredients"""
@@ -282,4 +322,5 @@ class DatasetPreprocessor:
         if not any(indicator in ingredient_names for indicator in gluten_indicators):
             tags.append('Gluten-Free')
         
-        return tags
+        # Standardize tags before returning
+        return self._standardize_tags(tags)

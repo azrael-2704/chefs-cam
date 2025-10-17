@@ -10,9 +10,9 @@ export function ResultsPage() {
 
   const filteredRecipes = searchResults.filter((recipe) => {
     if (filters.dietary && filters.dietary.length > 0) {
-      const hasMatchingDietary = filters.dietary.some((pref) =>
-        recipe.dietary_tags.includes(pref)
-      );
+      const normalize = (s: string) => String(s || '').trim().toLowerCase().replace(/[_\s]+/g, '-');
+      const recipeTags = (recipe.dietary_tags || []).map((t) => normalize(t));
+      const hasMatchingDietary = filters.dietary.some((pref) => recipeTags.includes(normalize(pref)));
       if (!hasMatchingDietary) return false;
     }
 

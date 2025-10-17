@@ -1,7 +1,7 @@
 // frontend/src/lib/api.ts
 
 // Use environment variable for API URL with fallbacks
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://chefs-cam.onrender.com';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 console.log('API Base URL:', API_BASE_URL); // Debug log
 
@@ -127,7 +127,12 @@ export const recipesAPI = {
   search: async (ingredients: string[], dietaryPreferences: string[] = []) => {
     const formData = new FormData();
     ingredients.forEach(ingredient => formData.append('ingredients', ingredient));
-    dietaryPreferences.forEach(pref => formData.append('dietary_preferences', pref));
+    // Normalize dietary preferences to a simple canonical form to avoid server mismatches
+    dietaryPreferences.forEach(pref => {
+      if (!pref) return;
+      const normalized = String(pref).trim().toLowerCase().replace(/[_\s]+/g, '-');
+      formData.append('dietary_preferences', normalized);
+    });
 
     const response = await fetch(`${API_BASE_URL}/recipes/search`, {
       method: 'POST',

@@ -5,7 +5,6 @@ import { User } from '../types';
 
 interface AuthContextType {
   user: User | null;
-  setUser: (user: User | null) => void; // Add this
   loading: boolean;
   signInWithEmail: (email: string, password: string) => Promise<void>;
   signUpWithEmail: (email: string, password: string, fullName?: string) => Promise<void>;
@@ -66,7 +65,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     <AuthContext.Provider
       value={{
         user,
-        setUser, // Add this
         loading,
         signInWithEmail,
         signUpWithEmail,

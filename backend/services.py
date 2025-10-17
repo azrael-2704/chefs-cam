@@ -23,6 +23,12 @@ logger = logging.getLogger(__name__)
 recipe_cache = RecipeCache()
 recipe_matcher = RecipeMatcher()
 
+def _normalize_tag(tag: str) -> str:
+    """Normalize dietary tag for comparison: lowercase, strip, replace spaces/underscores with hyphens"""
+    if not tag:
+        return ''
+    return ''.join(ch for ch in tag.lower().strip()).replace(' ', '-').replace('_', '-')
+
 # Get relative paths for dataset
 current_dir = os.path.dirname(os.path.abspath(__file__))
 csv_path = os.path.join(current_dir, 'dataset', 'recipes.csv')
@@ -216,6 +222,45 @@ def _apply_default_recipe_values(recipe_data):
     })
     return recipe_data
 
+def _construct_image_url(recipe_data: dict) -> dict:
+    """Construct absolute image URL."""
+    if recipe_data and recipe_data.get('image_url'):
+        image_filename = recipe_data['image_url']
+        # If image is already an absolute URL, leave it
+        if isinstance(image_filename, str) and image_filename.startswith(('http://', 'https://')):
+            return recipe_data
+
+        # If it's already a static path, leave as-is
+        if isinstance(image_filename, str) and (image_filename.startswith('/static/') or image_filename.startswith('static/')):
+            # normalize to start with /static/
+            if image_filename.startswith('static/'):
+                recipe_data['image_url'] = '/' + image_filename
+            return recipe_data
+
+        # Otherwise treat value as a filename. If the images_dir is mounted and file exists, return relative /static path
+        try:
+            candidate_path = os.path.join(images_dir, image_filename)
+            if os.path.exists(candidate_path):
+                recipe_data['image_url'] = f"/static/{image_filename}"
+                return recipe_data
+        except Exception:
+            # If filesystem checks fail, continue to try constructing absolute URL
+            pass
+
+        # If file not present locally, try to use BACKEND_BASE_URL if set
+        try:
+            backend_base = getattr(settings, 'BACKEND_BASE_URL', None)
+            if backend_base:
+                backend_base = backend_base.rstrip('/')
+                recipe_data['image_url'] = f"{backend_base}/static/{image_filename}"
+                return recipe_data
+        except Exception:
+            pass
+
+        # Last resort: leave whatever was provided (frontend will fall back to placeholder)
+        recipe_data['image_url'] = image_filename
+    return recipe_data
+
 def get_recipe_with_adjusted_servings(db: Session, recipe_id: int, desired_servings: int = None, user_id: int = None):
     """Get recipe with optional serving size adjustment - with user data"""
     recipe = db.query(models.Recipe).filter(models.Recipe.id == recipe_id).first()
@@ -282,7 +327,7 @@ def get_recipe_with_adjusted_servings(db: Session, recipe_id: int, desired_servi
         recipe_dict['adjusted_servings'] = desired_servings
         recipe_dict['original_servings'] = original_servings
     
-    return recipe_dict
+    return _construct_image_url(recipe_dict)
 
 def search_recipes_by_ingredients(
     db: Session,
@@ -293,6 +338,20 @@ def search_recipes_by_ingredients(
 ):
     """Search recipes with caching and user-specific data"""
     
+    # Defensive: coerce inputs to lists in case a single string was passed
+    if ingredients is None:
+        ingredients = []
+    if isinstance(ingredients, str):
+        ingredients = [ingredients]
+
+    if dietary_preferences is None:
+        dietary_preferences = []
+    # If a single string was passed (not a list), wrap it
+    if isinstance(dietary_preferences, str):
+        dietary_preferences = [dietary_preferences]
+
+    logger.info(f"Search called with ingredients={ingredients} dietary_preferences={dietary_preferences}")
+
     # Check cache first
     cached_recipe_ids = recipe_cache.get_cached_recipes(ingredients, dietary_preferences or [])
     if cached_recipe_ids:
@@ -308,32 +367,61 @@ def search_recipes_by_ingredients(
     matched_recipes = recipe_matcher.find_best_matches(ingredients, DATASET_RECIPES)
     matched_recipes.sort(key=lambda r: r.get("match_score", 0), reverse=True)
     
-    # Apply dietary filters
-    if dietary_preferences:
-        matched_recipes = [
-            recipe for recipe in matched_recipes
-            if any(tag in recipe.get('dietary_tags', []) for tag in dietary_preferences)
-        ]
+    # Apply dietary filters (normalize tags to be case/format insensitive)
+    try:
+        if dietary_preferences:
+            # Normalize preferences coming from the request
+            normalized_prefs = set()
+            for pref in dietary_preferences:
+                try:
+                    if not pref:
+                        continue
+                    p = str(pref).strip().lower().replace('_', '-').replace(' ', '-')
+                    if p:
+                        normalized_prefs.add(p)
+                except Exception:
+                    continue
 
-    # Enhance ONLY top recipes via Gemini
+            if normalized_prefs:
+                def recipe_has_pref(recipe):
+                    try:
+                        recipe_tags = recipe.get('dietary_tags', []) or []
+                        normalized_tags = {str(t).strip().lower().replace('_', '-').replace(' ', '-') for t in recipe_tags if t}
+                        # Return True if any requested pref is in the recipe tags
+                        return any(p in normalized_tags for p in normalized_prefs)
+                    except Exception:
+                        return False
+
+                matched_recipes = [r for r in matched_recipes if recipe_has_pref(r)]
+    except Exception as e:
+        logger.error(f"Dietary filtering failed: {e}")
+        # Continue without diet filtering
+
+    # Enhance ONLY top recipes via Gemini and attach user-specific data
     enhanced_recipes = []
-    for i, recipe in enumerate(matched_recipes):
-        if i < top_n_gemini and recipe.get('calories', 0) == 0 and settings.GEMINI_API_KEY:
+    try:
+        for i, recipe in enumerate(matched_recipes):
             try:
-                recipe = enhance_recipe_with_gemini(recipe)
-                recipe['enhanced'] = True
-            except Exception as e:
-                logger.error(f"Failed to enhance recipe {recipe['title']}: {e}")
-                recipe['enhanced'] = False
-        else:
-            recipe['enhanced'] = False
-        
-        # Add user-specific data if user is provided
-        if user_id:
-            recipe['is_favorited'] = is_recipe_favorited(db, user_id, recipe['id'])
-            recipe['user_rating'] = get_user_rating(db, user_id, recipe['id'])
-        
-        enhanced_recipes.append(recipe)
+                if i < top_n_gemini and recipe.get('calories', 0) == 0 and settings.GEMINI_API_KEY:
+                    recipe = enhance_recipe_with_gemini(recipe)
+                    recipe['enhanced'] = True
+                else:
+                    recipe['enhanced'] = False
+
+                # Add user-specific data if user is provided
+                if user_id:
+                    recipe['is_favorited'] = is_recipe_favorited(db, user_id, recipe.get('id'))
+                    recipe['user_rating'] = get_user_rating(db, user_id, recipe.get('id'))
+
+                enhanced_recipes.append(_construct_image_url(recipe))
+            except Exception as inner_e:
+                logger.error(f"Error processing recipe {recipe.get('id')}: {inner_e}")
+                # Skip problematic recipe
+                continue
+    except Exception as e:
+        logger.error(f"Enhancement loop failed: {e}")
+        # Fallback: return basic matched recipes with constructed image URLs
+        enhanced_recipes = [_construct_image_url(r) for r in matched_recipes]
 
     # Cache the resulting recipe IDs
     recipe_ids = [recipe['id'] for recipe in enhanced_recipes]
@@ -347,7 +435,12 @@ def get_filtered_recipes(db: Session, dietary: str = None, difficulty: str = Non
     filtered_recipes = DATASET_RECIPES.copy()
     
     if dietary:
-        filtered_recipes = [r for r in filtered_recipes if dietary in r.get('dietary_tags', [])]
+        pref = dietary.strip().lower().replace('_', '-').replace(' ', '-')
+        def recipe_matches_pref(r):
+            tags = r.get('dietary_tags', []) or []
+            normalized_tags = {t.strip().lower().replace('_', '-').replace(' ', '-') for t in tags if t}
+            return pref in normalized_tags
+        filtered_recipes = [r for r in filtered_recipes if recipe_matches_pref(r)]
     if difficulty:
         filtered_recipes = [r for r in filtered_recipes if r.get('difficulty') == difficulty]
     if cuisine:
@@ -366,7 +459,7 @@ def get_filtered_recipes(db: Session, dietary: str = None, difficulty: str = Non
             recipe['is_favorited'] = is_recipe_favorited(db, user_id, recipe['id'])
             recipe['user_rating'] = get_user_rating(db, user_id, recipe['id'])
     
-    return filtered_recipes
+    return [_construct_image_url(r) for r in filtered_recipes]
 
 def is_recipe_favorited(db: Session, user_id: int, recipe_id: int) -> bool:
     """Check if a recipe is favorited by user"""
@@ -530,7 +623,7 @@ def get_recommendations(db: Session, user_id: int, limit: int = 10) -> List[Dict
             recipe['user_rating'] = get_user_rating(db, user_id, recipe['id'])
         
         logger.info(f"Generated {len(recommendations)} recommendations for user {user_id}")
-        return recommendations
+        return [_construct_image_url(r) for r in recommendations]
         
     except Exception as e:
         logger.error(f"Error generating recommendations: {e}")
@@ -539,7 +632,8 @@ def get_recommendations(db: Session, user_id: int, limit: int = 10) -> List[Dict
 def get_popular_recipes(limit: int = 10) -> List[Dict]:
     """Get popular recipes (fallback for recommendations)"""
     DATASET_RECIPES.sort(key=lambda x: x.get('average_rating', 0), reverse=True)
-    return DATASET_RECIPES[:limit]
+    recipes = DATASET_RECIPES[:limit]
+    return [_construct_image_url(r) for r in recipes]
 
 def get_recipe_stats(db: Session):
     """Get statistics about recipes"""
