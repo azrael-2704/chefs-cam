@@ -1,5 +1,5 @@
 # backend/main.py
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Query, Request
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
@@ -7,7 +7,6 @@ from sqlalchemy.orm import Session
 import json
 import os
 from typing import List, Optional
-import time as _time
 import google.generativeai as genai
 from config import settings
 import base64
@@ -19,9 +18,6 @@ import models
 import schemas
 import auth
 import services
-import logging
-
-logger = logging.getLogger(__name__)
 
 # Get relative path for static files
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -174,8 +170,9 @@ def delete_current_user(current_user: models.User = Depends(get_current_user), d
 
 # Recipe endpoints
 @app.post("/recipes/search")
-async def search_recipes(
-    request: Request,
+def search_recipes(
+    ingredients: List[str] = Form(...),
+    dietary_preferences: Optional[List[str]] = Form([]),
     db: Session = Depends(get_db),
     user: Optional[models.User] = Depends(get_optional_user)
 ):
@@ -183,25 +180,9 @@ async def search_recipes(
     Search recipes by ingredients with optional dietary preferences
     """
     try:
-        form = await request.form()
-        # Get ingredients (may be provided multiple times)
-        ingredients = form.getlist('ingredients') if hasattr(form, 'getlist') else form.get('ingredients')
-        dietary_preferences = form.getlist('dietary_preferences') if hasattr(form, 'getlist') else form.get('dietary_preferences')
-
-        # Normalize to lists
-        if ingredients is None:
-            ingredients = []
-        elif isinstance(ingredients, str):
-            ingredients = [ingredients]
-
-        if dietary_preferences is None:
-            dietary_preferences = []
-        elif isinstance(dietary_preferences, str):
-            dietary_preferences = [dietary_preferences]
-
         if not ingredients:
             raise HTTPException(status_code=400, detail="At least one ingredient is required")
-
+        
         recipes = services.search_recipes_by_ingredients(db, ingredients, dietary_preferences)
         
         # Add user-specific data if user is authenticated
@@ -215,9 +196,7 @@ async def search_recipes(
         return {"recipes": recipes}
     
     except Exception as e:
-        logger.exception(f"Search endpoint error: {e}")
-        # Return empty results instead of 500 so frontend can handle gracefully
-        return {"recipes": []}
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
 @app.get("/recipes")
 def get_all_recipes(
@@ -405,56 +384,6 @@ def get_popular_recipes(
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get popular recipes: {str(e)}")
-
-
-@app.get("/debug/match-speed")
-def debug_match_speed(
-    ingredients: Optional[List[str]] = Query(None, description="Ingredient list (repeatable)"),
-    top_k: Optional[int] = Query(10, description="Top K matches to return")
-):
-    """Debug endpoint: return timings for matching with precomputed TF-IDF vs fresh computation."""
-    try:
-        if not ingredients:
-            raise HTTPException(status_code=400, detail="Provide at least one ingredient via ?ingredients=...")
-
-        matcher = services.recipe_matcher
-
-        # Warmup / precomputed run
-        t0 = _time.perf_counter()
-        precomputed = matcher.find_best_matches(ingredients, services.DATASET_RECIPES, top_k=top_k)
-        t1 = _time.perf_counter()
-
-        # Force recompute by clearing precomputed matrices
-        old_vectorizer = getattr(matcher, 'vectorizer', None)
-        old_matrix = getattr(matcher, 'recipe_matrix', None)
-        old_docs = getattr(matcher, 'recipe_docs', None)
-        old_meta = getattr(matcher, 'recipe_meta', None)
-
-        matcher.vectorizer = None
-        matcher.recipe_matrix = None
-        matcher.recipe_docs = []
-        matcher.recipe_meta = []
-
-        t2 = _time.perf_counter()
-        recomputed = matcher.find_best_matches(ingredients, services.DATASET_RECIPES, top_k=top_k)
-        t3 = _time.perf_counter()
-
-        # Restore state
-        matcher.vectorizer = old_vectorizer
-        matcher.recipe_matrix = old_matrix
-        matcher.recipe_docs = old_docs
-        matcher.recipe_meta = old_meta
-
-        return {
-            'precomputed_time_s': round(t1 - t0, 4),
-            'recomputed_time_s': round(t3 - t2, 4),
-            'precomputed_count': len(precomputed),
-            'recomputed_count': len(recomputed)
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Debug failed: {e}")
 
 # Analysis endpoints
 def analyze_image_with_gemini(image_bytes: bytes) -> List[str]:

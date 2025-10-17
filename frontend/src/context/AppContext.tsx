@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, ReactNode } from 'react';
 import { Recipe, RecipeFilters, Page } from '../types';
+import { useAuth } from './AuthContext';
 
 interface AppContextType {
   currentPage: Page;
@@ -14,6 +15,7 @@ interface AppContextType {
   setSearchResults: (recipes: Recipe[]) => void;
   favorites: Set<string>;
   toggleFavorite: (recipeId: string) => void;
+  user: any | null;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -25,6 +27,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [filters, setFilters] = useState<RecipeFilters>({});
   const [searchResults, setSearchResults] = useState<Recipe[]>([]);
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
+  // Pull authenticated user from AuthContext so components can check login state
+  const { user } = useAuth();
 
   const toggleFavorite = (recipeId: string) => {
     setFavorites(prev => {
@@ -53,6 +57,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setSearchResults,
         favorites,
         toggleFavorite,
+        user,
       }}
     >
       {children}

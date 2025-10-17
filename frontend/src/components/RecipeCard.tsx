@@ -1,6 +1,7 @@
 // frontend/src/components/RecipeCard.tsx
 import { Clock, Users, Flame, Heart, Star } from 'lucide-react';
 import { Recipe } from '../types';
+import { API_BASE_URL } from '../lib/api';
 import { useApp } from '../context/AppContext';
 import { Button } from './Button';
 import { recipesAPI } from '../lib/api';
@@ -77,7 +78,7 @@ export function RecipeCard({
     <div className="bg-white rounded-2xl shadow-lg hover:shadow-2xl transition-all duration-300 overflow-hidden group cursor-pointer">
       <div className="relative h-48 overflow-hidden">
         <img
-          src={recipe.image_url || "https://images.pexels.com/photos/1640770/pexels-photo-1640770.jpeg"}
+          src={(recipe.image_url && recipe.image_url.startsWith('/static')) ? `${API_BASE_URL}${recipe.image_url}` : (recipe.image_url || "https://images.pexels.com/photos/1640770/pexels-photo-1640770.jpeg")}
           alt={recipe.title}
           className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
           onError={(e) => {

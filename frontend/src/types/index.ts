@@ -6,8 +6,6 @@ export interface Recipe {
   difficulty: 'Easy' | 'Medium' | 'Hard';
   cooking_time: number;
   servings: number;
-  original_servings?: number;
-  adjusted_servings?: number;
   cuisine: string;
   calories: number;
   protein: number;
@@ -18,15 +16,20 @@ export interface Recipe {
   dietary_tags: string[];
   created_at: string;
   average_rating?: number;
-  rating_count?: number;
   is_favorited?: boolean;
   user_rating?: number;
+  matchScore?: number;
+  recommendationScore?: number;
+  enhanced?: boolean;
+  adjusted_servings?: number;
+  original_servings?: number;
+  matchingIngredients?: string[];
+  rating_count?: number;
 }
 
 export interface Ingredient {
   name: string;
   amount: string;
-  original_amount?: string;
   unit: string;
 }
 

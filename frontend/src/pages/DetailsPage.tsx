@@ -2,14 +2,12 @@
 import { useState, useEffect } from 'react';
 import { Clock, Users, Flame, Heart, Star, ArrowLeft, ChefHat, Utensils } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { useAuth } from '../context/AuthContext';
 import { Button } from '../components/Button';
 import { recipesAPI } from '../lib/api';
-import { parseAmount, formatAmount } from '../lib/servingUtils';
+import { API_BASE_URL } from '../lib/api';
 
 export function DetailsPage() {
-  const { selectedRecipe, setCurrentPage, favorites, toggleFavorite } = useApp();
-  const { user } = useAuth();
+  const { selectedRecipe, setCurrentPage, favorites, toggleFavorite, user } = useApp();
   const [activeTab, setActiveTab] = useState<'ingredients' | 'steps' | 'nutrition'>('ingredients');
   const [servings, setServings] = useState(selectedRecipe?.servings || 4);
   const [userRating, setUserRating] = useState(selectedRecipe?.user_rating || 0);
@@ -99,50 +97,15 @@ export function DetailsPage() {
     
     setServings(newServings);
     
-    // Always attempt to reload recipe with adjusted servings from backend
-    try {
-      const adjustedRecipe = await recipesAPI.getById(parseInt(currentRecipe.id), newServings);
-      setCurrentRecipe(adjustedRecipe);
-      return;
-    } catch (err) {
-      console.error('Error loading adjusted recipe:', err);
-      // Fallback to local calculation below
-    }
-
-    // Local fallback: adjust ingredient amounts using ServingCalculator-like logic
-    try {
-      const originalServings = currentRecipe.original_servings || currentRecipe.servings || 1;
-      const ratio = newServings / originalServings;
-      const locallyAdjusted = {
-        ...currentRecipe,
-        adjusted_servings: newServings,
-        original_servings: originalServings,
-        ingredients: currentRecipe.ingredients.map((ing: any) => {
-          const orig = ing.amount || '0';
-          // If amount contains commas, only try to scale the first numeric part
-          const parts = String(orig).split(',').map((s) => s.trim());
-          const first = parts[0] || '0';
-
-          const parsed = parseAmount(first);
-          let scaledStr = first;
-          if (parsed > 0) {
-            const scaled = parsed * ratio;
-            scaledStr = formatAmount(scaled);
-          }
-
-          // If there were multiple comma parts, reassemble with scaled first part
-          const newAmount = [scaledStr, ...parts.slice(1)].join(', ');
-
-          return {
-            ...ing,
-            original_amount: orig,
-            amount: newAmount,
-          };
-        }),
-      };
-      setCurrentRecipe(locallyAdjusted);
-    } catch (err) {
-      console.error('Local adjustment failed', err);
+    // If servings change significantly, reload recipe with adjusted servings
+    if (Math.abs(newServings - currentRecipe.servings) > 2) {
+      try {
+        const adjustedRecipe = await recipesAPI.getById(parseInt(currentRecipe.id), newServings);
+        setCurrentRecipe(adjustedRecipe);
+      } catch (err) {
+        console.error('Error loading adjusted recipe:', err);
+        // Fallback to local calculation
+      }
     }
   };
 
@@ -190,7 +153,7 @@ export function DetailsPage() {
       {/* Hero Section */}
       <div className="relative h-96 overflow-hidden">
         <img
-          src={currentRecipe.image_url || "https://images.pexels.com/photos/1640770/pexels-photo-1640770.jpeg"}
+          src={(currentRecipe.image_url && currentRecipe.image_url.startsWith('/static')) ? `${API_BASE_URL}${currentRecipe.image_url}` : (currentRecipe.image_url || "https://images.pexels.com/photos/1640770/pexels-photo-1640770.jpeg")}
           alt={currentRecipe.title}
           className="w-full h-full object-cover"
           onError={(e) => {
@@ -349,48 +312,20 @@ export function DetailsPage() {
                 </div>
 
                 <div className="space-y-3">
-                  {currentRecipe.ingredients.map((ingredient, index) => {
-                    // Split amount by comma into multiple quantity bullets
-                    const amountStr = ingredient.amount || '';
-                    const amountParts = String(amountStr).split(',').map((s) => s.trim()).filter(Boolean);
-
-                    return (
-                      <div
-                        key={index}
-                        className="p-4 bg-gradient-to-r from-amber-50 to-orange-50 rounded-xl hover:shadow-md transition-shadow"
-                      >
-                        <div className="flex items-start gap-4">
-                          <div className="w-2 h-2 mt-2 bg-gradient-to-r from-amber-500 to-orange-500 rounded-full" />
-                          <div className="flex-1">
-                            <div className="text-lg text-gray-900">
-                              <span className="font-semibold">
-                                {amountParts.length === 1 ? (
-                                  <>{amountParts[0]} {ingredient.unit}</>
-                                ) : (
-                                  <>{ingredient.unit}</>
-                                )}
-                              </span>{' '}
-                              {ingredient.name}
-                            </div>
-
-                            {amountParts.length > 1 && (
-                              <ul className="mt-2 ml-4 list-disc list-inside text-gray-700">
-                                {amountParts.map((part, pIdx) => (
-                                  <li key={pIdx} className="text-sm">
-                                    {part} {pIdx === 0 ? ingredient.unit : ''}
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-
-                            {ingredient.original_amount && (
-                              <div className="text-xs text-gray-400 mt-2">Original: {ingredient.original_amount}</div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
+                  {currentRecipe.ingredients.map((ingredient, index) => (
+                    <div
+                      key={index}
+                      className="flex items-center gap-4 p-4 bg-gradient-to-r from-amber-50 to-orange-50 rounded-xl hover:shadow-md transition-shadow"
+                    >
+                      <div className="w-2 h-2 bg-gradient-to-r from-amber-500 to-orange-500 rounded-full" />
+                      <span className="text-lg text-gray-900">
+                        <span className="font-semibold">
+                          {ingredient.amount} {ingredient.unit}
+                        </span>{' '}
+                        {ingredient.name}
+                      </span>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}

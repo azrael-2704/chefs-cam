@@ -26,9 +26,6 @@ class Settings:
     
     # Cache
     CACHE_TTL = int(os.getenv("CACHE_TTL", "3600"))
-    
-    # Backend URL for constructing absolute URLs
-    BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://localhost:8000")
 
 settings = Settings()
 
