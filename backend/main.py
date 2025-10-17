@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 import json
 import os
 from typing import List, Optional
+import time as _time
 import google.generativeai as genai
 from config import settings
 import base64
@@ -404,6 +405,56 @@ def get_popular_recipes(
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get popular recipes: {str(e)}")
+
+
+@app.get("/debug/match-speed")
+def debug_match_speed(
+    ingredients: Optional[List[str]] = Query(None, description="Ingredient list (repeatable)"),
+    top_k: Optional[int] = Query(10, description="Top K matches to return")
+):
+    """Debug endpoint: return timings for matching with precomputed TF-IDF vs fresh computation."""
+    try:
+        if not ingredients:
+            raise HTTPException(status_code=400, detail="Provide at least one ingredient via ?ingredients=...")
+
+        matcher = services.recipe_matcher
+
+        # Warmup / precomputed run
+        t0 = _time.perf_counter()
+        precomputed = matcher.find_best_matches(ingredients, services.DATASET_RECIPES, top_k=top_k)
+        t1 = _time.perf_counter()
+
+        # Force recompute by clearing precomputed matrices
+        old_vectorizer = getattr(matcher, 'vectorizer', None)
+        old_matrix = getattr(matcher, 'recipe_matrix', None)
+        old_docs = getattr(matcher, 'recipe_docs', None)
+        old_meta = getattr(matcher, 'recipe_meta', None)
+
+        matcher.vectorizer = None
+        matcher.recipe_matrix = None
+        matcher.recipe_docs = []
+        matcher.recipe_meta = []
+
+        t2 = _time.perf_counter()
+        recomputed = matcher.find_best_matches(ingredients, services.DATASET_RECIPES, top_k=top_k)
+        t3 = _time.perf_counter()
+
+        # Restore state
+        matcher.vectorizer = old_vectorizer
+        matcher.recipe_matrix = old_matrix
+        matcher.recipe_docs = old_docs
+        matcher.recipe_meta = old_meta
+
+        return {
+            'precomputed_time_s': round(t1 - t0, 4),
+            'recomputed_time_s': round(t3 - t2, 4),
+            'precomputed_count': len(precomputed),
+            'recomputed_count': len(recomputed)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Debug failed: {e}")
 
 # Analysis endpoints
 def analyze_image_with_gemini(image_bytes: bytes) -> List[str]:

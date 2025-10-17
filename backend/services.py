@@ -42,6 +42,12 @@ try:
     preprocessor = DatasetPreprocessor(csv_path=csv_path, images_dir=images_dir)
     DATASET_RECIPES = preprocessor.load_and_preprocess()
     logger.info(f"Loaded {len(DATASET_RECIPES)} recipes from dataset")
+    # Precompute TF-IDF corpus for faster matching
+    try:
+        recipe_matcher.build_corpus(DATASET_RECIPES)
+        logger.info("Precomputed recipe TF-IDF corpus for faster searches")
+    except Exception as e:
+        logger.warning(f"Failed to precompute recipe corpus: {e}")
 except Exception as e:
     logger.error(f"Failed to load dataset: {e}")
     DATASET_RECIPES = []
@@ -237,40 +243,42 @@ def _construct_image_url(recipe_data: dict) -> dict:
                 recipe_data['image_url'] = '/' + image_filename
             return recipe_data
 
-        # Otherwise treat value as a filename. Be robust to values that include a path
+        # Otherwise treat value as a filename. Prefer /static/<basename> for consistency.
         try:
             # Use basename so values like 'dataset/food-images/foo.jpg' or 'food-images/foo.jpg' still match
             image_basename = os.path.basename(image_filename)
-            candidate_paths = [
-                os.path.join(images_dir, image_basename),
-                os.path.join(images_dir, image_filename),
-            ]
-            found = False
-            for candidate in candidate_paths:
-                try:
-                    if os.path.exists(candidate):
-                        recipe_data['image_url'] = f"/static/{image_basename}"
-                        found = True
-                        break
-                except Exception:
-                    # ignore and continue checking other candidates
-                    continue
-            if found:
-                return recipe_data
+            # Default to relative /static path so frontend gets a predictable URL
+            default_static = f"/static/{image_basename}"
+
+            # If images_dir exists and the file is present, return the /static path
+            try:
+                local_candidate = os.path.join(images_dir, image_basename)
+                if os.path.exists(local_candidate):
+                    recipe_data['image_url'] = default_static
+                    return recipe_data
+            except Exception:
+                # ignore filesystem errors and continue
+                pass
+
+            # If file not present locally, we'll decide below whether to use BACKEND_BASE_URL or keep /static/
+            recipe_data['image_url'] = default_static
+            # do not return yet; prefer to convert to absolute if BACKEND_BASE_URL is set
         except Exception:
-            # If filesystem checks fail, continue to try constructing absolute URL
+            # If basename extraction fails, fall back to provided value
             pass
 
-        # If file not present locally, try to use BACKEND_BASE_URL if set
+        # If BACKEND_BASE_URL is set, convert relative /static/ to absolute backend URL for deployed frontends
         try:
             backend_base = getattr(settings, 'BACKEND_BASE_URL', None)
             if backend_base:
                 backend_base = backend_base.rstrip('/')
-                # Use the basename when constructing external URL to avoid doubling paths
-                image_basename = os.path.basename(image_filename)
-                recipe_data['image_url'] = f"{backend_base}/static/{image_basename}"
-                logger.debug(f"Constructed backend image URL for {image_basename}")
-                return recipe_data
+                # If we earlier set recipe_data['image_url'] to /static/<basename>, convert it
+                cur = recipe_data.get('image_url', '')
+                if isinstance(cur, str) and cur.startswith('/static/'):
+                    image_basename = os.path.basename(cur)
+                    recipe_data['image_url'] = f"{backend_base}/static/{image_basename}"
+                    logger.debug(f"Converted to absolute backend image URL for {image_basename}")
+                    return recipe_data
         except Exception as e:
             logger.debug(f"Failed to construct backend image URL: {e}")
 
