@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Heart, Sparkles } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Heart } from 'lucide-react';
 import { RecipeCard } from '../components/RecipeCard';
 import { Button } from '../components/Button';
 import { useApp } from '../context/AppContext';
@@ -7,7 +7,7 @@ import { Recipe } from '../types';
 import { favoritesAPI } from '../lib/api';
 
 export function FavoritesPage() {
-  const { setCurrentPage, setSelectedRecipe } = useApp();
+  const { setCurrentPage, setSelectedRecipe, setFavoritesFromArray } = useApp();
   const [favoriteRecipes, setFavoriteRecipes] = useState<Recipe[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -19,6 +19,10 @@ export function FavoritesPage() {
         const recipes = await favoritesAPI.get();
         setFavoriteRecipes(recipes);
         setError(null);
+        // ensure AppContext favorites set reflects server
+        if (recipes && recipes.length) {
+          setFavoritesFromArray(recipes.map((r: any) => String(r.id)));
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to fetch favorites');
       } finally {

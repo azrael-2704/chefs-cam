@@ -1,5 +1,5 @@
 # backend/main.py
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Query
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
@@ -170,9 +170,8 @@ def delete_current_user(current_user: models.User = Depends(get_current_user), d
 
 # Recipe endpoints
 @app.post("/recipes/search")
-def search_recipes(
-    ingredients: List[str] = Form(...),
-    dietary_preferences: Optional[List[str]] = Form([]),
+async def search_recipes(
+    request: Request,
     db: Session = Depends(get_db),
     user: Optional[models.User] = Depends(get_optional_user)
 ):
@@ -180,9 +179,46 @@ def search_recipes(
     Search recipes by ingredients with optional dietary preferences
     """
     try:
+        # Support both JSON body and form-data submissions.
+        ingredients: List[str] = []
+        dietary_preferences: List[str] = []
+
+        content_type = request.headers.get('content-type', '')
+        if content_type.startswith('application/json'):
+            body = await request.json()
+            ingredients = body.get('ingredients') or []
+            dietary_preferences = body.get('dietary_preferences') or body.get('dietary') or []
+        else:
+            form = await request.form()
+            # form is a Starlette FormData which supports getlist
+            try:
+                ingredients = list(form.getlist('ingredients')) if hasattr(form, 'getlist') else form.get('ingredients') or []
+            except Exception:
+                # fallback single value
+                v = form.get('ingredients')
+                if v:
+                    ingredients = [v]
+                else:
+                    ingredients = []
+
+            try:
+                dietary_preferences = list(form.getlist('dietary_preferences')) if hasattr(form, 'getlist') else form.get('dietary_preferences') or []
+            except Exception:
+                v = form.get('dietary_preferences')
+                if v:
+                    dietary_preferences = [v]
+                else:
+                    dietary_preferences = []
+
+        # If ingredients arrived as a single comma-separated string, split
+        if isinstance(ingredients, str):
+            ingredients = [i.strip() for i in ingredients.split(',') if i.strip()]
+
         if not ingredients:
             raise HTTPException(status_code=400, detail="At least one ingredient is required")
-        
+
+        dietary_preferences = dietary_preferences or []
+
         recipes = services.search_recipes_by_ingredients(db, ingredients, dietary_preferences)
         
         # Add user-specific data if user is authenticated
@@ -282,11 +318,10 @@ def toggle_favorite(
         recipe = services.get_recipe_with_adjusted_servings(db, recipe_id)
         if not recipe:
             raise HTTPException(status_code=404, detail="Recipe not found")
-        
-    # services.toggle_favorite returns True when added, False when removed
-    favorite = services.toggle_favorite(db, current_user.id, recipe_id)
-    return {"is_favorited": bool(favorite)}
-    
+        # services.toggle_favorite returns True when added, False when removed
+        favorite = services.toggle_favorite(db, current_user.id, recipe_id)
+        return {"is_favorited": bool(favorite)}
+
     except HTTPException:
         raise
     except Exception as e:
@@ -483,5 +518,5 @@ if __name__ == "__main__":
         "main:app",
         host="0.0.0.0", 
         port=int(os.environ.get("PORT", 8000)),
-        reload=False
+        reload=True
     )

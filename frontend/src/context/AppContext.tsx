@@ -14,7 +14,7 @@ interface AppContextType {
   searchResults: Recipe[];
   setSearchResults: (recipes: Recipe[]) => void;
   favorites: Set<string>;
-  toggleFavorite: (recipeId: string, setTo?: boolean) => void;
+  toggleFavorite: (recipeId: string | number, setTo?: boolean) => void;
   setFavoritesFromArray: (ids: string[]) => void;
   user: any | null;
 }
@@ -31,14 +31,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Pull authenticated user from AuthContext so components can check login state
   const { user } = useAuth();
 
-  const toggleFavorite = (recipeId: string, setTo?: boolean) => {
+  const toggleFavorite = (recipeId: string | number, setTo?: boolean) => {
+    const id = String(recipeId);
     setFavorites(prev => {
       const newFavorites = new Set(prev);
-      const shouldSet = typeof setTo === 'boolean' ? setTo : !newFavorites.has(recipeId);
+      const shouldSet = typeof setTo === 'boolean' ? setTo : !newFavorites.has(id);
       if (shouldSet) {
-        newFavorites.add(recipeId);
+        newFavorites.add(id);
       } else {
-        newFavorites.delete(recipeId);
+        newFavorites.delete(id);
       }
       return newFavorites;
     });

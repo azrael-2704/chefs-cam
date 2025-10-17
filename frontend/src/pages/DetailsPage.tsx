@@ -17,37 +17,41 @@ export function DetailsPage() {
   const [currentRecipe, setCurrentRecipe] = useState(selectedRecipe);
   const [originalIngredients, setOriginalIngredients] = useState<any[] | null>(null);
   const [originalNutrition, setOriginalNutrition] = useState<{calories:number,protein:number,carbs:number,fat:number} | null>(null);
+  const [baselineServings, setBaselineServings] = useState<number | null>(null);
+
+  // Normalizes various ingredient representations into { name, amount, unit }
+  const normalizeIngredients = (rawIngredients: any): Array<{name: string; amount: string; unit: string}> => {
+    if (!rawIngredients) return [];
+    // Already normalized objects
+    if (Array.isArray(rawIngredients) && rawIngredients.length > 0 && typeof rawIngredients[0] === 'object') {
+      return rawIngredients.map((it: any) => ({ name: (it.name || '').trim(), amount: (it.amount || '').toString(), unit: (it.unit || '').toString() }));
+    }
+
+    let items: any[] = Array.isArray(rawIngredients) ? rawIngredients : [rawIngredients];
+    if (items.length === 1 && typeof items[0] === 'string' && items[0].includes(',')) {
+      items = items[0].split(',');
+    }
+
+    return items.map((it: any) => {
+      if (!it) return { name: '', amount: '', unit: '' };
+      if (typeof it === 'object') {
+        return { name: (it.name || '').trim(), amount: (it.amount || '').toString(), unit: (it.unit || '').toString() };
+      }
+      const s = String(it).trim();
+      // match leading amount and optional unit (e.g. '1 lb chicken', '1 1/2 cups flour')
+      const m = s.match(/^\s*(\d+(?:\s+\d+\/\d+|\/\d+|\.\d+)?)\s*([a-zA-Z]+)?\s+(.*)$/);
+      if (m) {
+        return { name: (m[3] || '').trim(), amount: (m[1] || '').trim(), unit: (m[2] || '').trim() };
+      }
+      // No leading amount -> treat entire string as name
+      return { name: s, amount: '', unit: '' };
+    });
+  };
 
   // Update local state when selectedRecipe changes
   useEffect(() => {
     if (selectedRecipe) {
-      // Normalize ingredients into objects with name, amount, unit
-      const normalizeInitial = (rawIngredients: any) => {
-        if (!rawIngredients) return [];
-        // If already objects with name/amount, return as-is
-        if (Array.isArray(rawIngredients) && rawIngredients.length > 0 && typeof rawIngredients[0] === 'object') {
-          return rawIngredients;
-        }
-        // If a single string with commas, split
-        let items: any[] = Array.isArray(rawIngredients) ? rawIngredients : [rawIngredients];
-        if (items.length === 1 && typeof items[0] === 'string' && items[0].includes(',')) {
-          items = items[0].split(',');
-        }
-        return items.map((it: any) => {
-          if (typeof it === 'string') {
-            const s = it.trim();
-            // try to match amount at start
-            const m = s.match(/^\s*(\d+(?:\s+\d+\/\d+|\/\d+|\.\d+)?)\s*([a-zA-Z]+)?\s+(.*)$/);
-            if (m) {
-              return { name: m[3].trim(), amount: m[1].trim(), unit: m[2] || '' };
-            }
-            return { name: s, amount: '', unit: '' };
-          }
-          return it;
-        });
-      };
-
-      const normalized = normalizeInitial(selectedRecipe.ingredients);
+      const normalized = normalizeIngredients(selectedRecipe.ingredients);
       setOriginalIngredients(normalized);
       setOriginalNutrition({
         calories: Number(selectedRecipe.calories || 0),
@@ -61,6 +65,12 @@ export function DetailsPage() {
         ingredients: normalized,
         original_servings: Number(selectedRecipe.servings || selectedRecipe.original_servings || 4)
       });
+      // Establish an immutable baseline servings value on initial load
+      setBaselineServings(Number(selectedRecipe.servings || selectedRecipe.original_servings || 4));
+      setUserRating(selectedRecipe.user_rating || 0);
+      setServings(Number(selectedRecipe.servings || 4));
+      // Establish an immutable baseline servings value on initial load
+      setBaselineServings(Number(selectedRecipe.servings || selectedRecipe.original_servings || 4));
       setUserRating(selectedRecipe.user_rating || 0);
       setServings(Number(selectedRecipe.servings || 4));
     }
@@ -226,16 +236,17 @@ export function DetailsPage() {
     // Always update UI servings counter
     setServings(newServings);
 
-    const original = (currentRecipe && currentRecipe.original_servings) ? Number(currentRecipe.original_servings) : Number(currentRecipe.servings || 4);
+  // Use immutable baselineServings where possible to avoid stacking adjustments
+  const original = baselineServings || ((currentRecipe && currentRecipe.original_servings) ? Number(currentRecipe.original_servings) : Number(currentRecipe.servings || 4));
 
     // For typical small adjustments (2-7 range) adjust locally for snappy UX
     if (newServings >= 2 && newServings <= 7) {
       try {
-        // Use originalIngredients (never mutated) as the source so adjustments don't stack
-        const sourceIngredients = originalIngredients || currentRecipe.ingredients || [];
-        const adjustedIngredients = adjustIngredientsLocally(sourceIngredients, original, newServings);
-        // Adjust nutrition from originalNutrition (never mutated)
-        const origNut = originalNutrition || { calories: Number(currentRecipe.calories || 0), protein: Number(currentRecipe.protein || 0), carbs: Number(currentRecipe.carbs || 0), fat: Number(currentRecipe.fat || 0) };
+  // Use baseline (never mutated) as the source so adjustments don't stack
+  const sourceIngredients = originalIngredients || currentRecipe.ingredients || [];
+  const adjustedIngredients = adjustIngredientsLocally(sourceIngredients, original, newServings);
+  // Adjust nutrition from originalNutrition (never mutated)
+  const origNut = originalNutrition || { calories: Number(currentRecipe.calories || 0), protein: Number(currentRecipe.protein || 0), carbs: Number(currentRecipe.carbs || 0), fat: Number(currentRecipe.fat || 0) };
         const multiplier = newServings / (original || 1);
         const adjustedNutrition = {
           calories: Math.round(origNut.calories * multiplier),
@@ -472,16 +483,18 @@ export function DetailsPage() {
                 </div>
 
                 <div className="space-y-3">
-                  {currentRecipe.ingredients.map((ingredient: any, index: number) => (
+                  {(currentRecipe.ingredients || []).map((ingredient: any, index: number) => (
                     <div
                       key={index}
                       className="flex items-center gap-4 p-4 bg-gradient-to-r from-amber-50 to-orange-50 rounded-xl hover:shadow-md transition-shadow"
                     >
                       <div className="w-2 h-2 bg-gradient-to-r from-amber-500 to-orange-500 rounded-full" />
                       <span className="text-lg text-gray-900">
-                        <span className="font-semibold">
-                          {ingredient.amount ? `${ingredient.amount} ${ingredient.unit}` : ''}
-                        </span>{' '}
+                        {ingredient.amount ? (
+                          <span className="font-semibold">{`${ingredient.amount} ${ingredient.unit}`}</span>
+                        ) : (
+                          <span className="font-semibold">According to taste, </span>
+                        )}{' '}
                         {ingredient.name}
                       </span>
                     </div>

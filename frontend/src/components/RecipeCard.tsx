@@ -5,7 +5,7 @@ import { API_BASE_URL } from '../lib/api';
 import { useApp } from '../context/AppContext';
 import { Button } from './Button';
 import { recipesAPI } from '../lib/api';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 interface RecipeCardProps {
   recipe: Recipe;
@@ -24,9 +24,22 @@ export function RecipeCard({
 }: RecipeCardProps) {
   const { favorites, toggleFavorite, user } = useApp();
   const [isLoading, setIsLoading] = useState(false);
-  
-  // Use both context and recipe data for favorite state
-  const isFavorited = favorites.has(recipe.id) || recipe.is_favorited;
+
+  const recipeIdStr = String(recipe.id);
+  // Local UI state to reflect favorite status immediately after API actions
+  const [localFavorited, setLocalFavorited] = useState<boolean>(
+    (favorites && favorites.size > 0) ? favorites.has(recipeIdStr) : !!recipe.is_favorited
+  );
+
+  // Keep local state in sync when context favorites or recipe prop changes
+  useEffect(() => {
+    const fromContext = favorites && favorites.size > 0 ? favorites.has(recipeIdStr) : undefined;
+    if (typeof fromContext === 'boolean') {
+      setLocalFavorited(fromContext);
+    } else {
+      setLocalFavorited(!!recipe.is_favorited);
+    }
+  }, [favorites, recipe.is_favorited, recipeIdStr]);
 
   const handleFavoriteClick = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -34,11 +47,11 @@ export function RecipeCard({
     
     setIsLoading(true);
     try {
-      const response = await recipesAPI.toggleFavorite(parseInt(recipe.id));
-      
-      // Update local state
-      // Set favorite to the state returned by the server to avoid desync
-      toggleFavorite(recipe.id, response.is_favorited);
+    const response = await recipesAPI.toggleFavorite(parseInt(recipe.id));
+
+    // Update local UI state immediately and context state to match server
+    setLocalFavorited(!!response.is_favorited);
+    toggleFavorite(recipeIdStr, response.is_favorited);
       
       // Update recipe data if callback provided
       if (onUpdate) {
@@ -93,14 +106,14 @@ export function RecipeCard({
             onClick={handleFavoriteClick}
             disabled={isLoading}
             className={`absolute top-3 right-3 p-2 rounded-full shadow-lg transition-all ${
-              isFavorited
+              localFavorited
                 ? 'bg-red-500 text-white hover:bg-red-600'
                 : 'bg-white text-gray-600 hover:bg-red-50 hover:text-red-500'
             } ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
             <Heart 
               className={`w-5 h-5 transition-all ${
-                isFavorited ? 'fill-current scale-110' : ''
+                localFavorited ? 'fill-current scale-110' : ''
               }`} 
             />
           </button>
@@ -222,13 +235,13 @@ export function RecipeCard({
               <span className="text-sm font-semibold text-gray-700">
                 {recipe.average_rating?.toFixed(1) || 'New'}
               </span>
-              {recipe.rating_count > 0 && (
+              {((recipe.rating_count || 0) > 0) && (
                 <span className="text-xs text-gray-500">({recipe.rating_count})</span>
               )}
             </div>
             
             {/* User Rating Indicator */}
-            {recipe.user_rating > 0 && (
+            {(recipe.user_rating || 0) > 0 && (
               <div className="flex items-center gap-1">
                 <span className="text-xs text-blue-600 font-medium">
                   You: {recipe.user_rating}★
