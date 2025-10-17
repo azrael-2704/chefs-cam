@@ -6,11 +6,9 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
-# Generate a secure secret key if not set
 def generate_secret_key():
     return secrets.token_urlsafe(32)
 
-# Configuration that reads from .env file
 class Settings:
     # Database - read from .env or use default
     DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./recipes.db")
@@ -23,7 +21,7 @@ class Settings:
     # Gemini API - read from .env
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
     
-    # CORS
+    # CORS - Updated for deployment
     FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
     
     # Cache
@@ -35,3 +33,4 @@ settings = Settings()
 print(f"🔐 JWT Secret Key: {'✅ Set' if settings.SECRET_KEY else '❌ Not set'}")
 print(f"🤖 Gemini API Key: {'✅ Set' if settings.GEMINI_API_KEY else '❌ Not set'}")
 print(f"🗄️  Database URL: {settings.DATABASE_URL}")
+print(f"🌐 Frontend URL: {settings.FRONTEND_URL}")

@@ -1,11 +1,14 @@
 // frontend/src/lib/api.ts
-const API_BASE_URL = 'http://localhost:8000';
+
+// Use environment variable for API URL with fallbacks
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://chefs-cam.onrender.com';
+
+console.log('API Base URL:', API_BASE_URL); // Debug log
 
 let authToken: string | null = null;
 
 export const setAuthToken = (token: string) => {
   authToken = token;
-  // Also store in localStorage for persistence
   if (token) {
     localStorage.setItem('authToken', token);
   } else {
@@ -15,13 +18,12 @@ export const setAuthToken = (token: string) => {
 
 export const getAuthToken = () => {
   if (!authToken) {
-    // Try to get from localStorage
     authToken = localStorage.getItem('authToken');
   }
   return authToken;
 };
 
-// Initialize authToken from localStorage on import
+// Initialize authToken from localStorage
 authToken = localStorage.getItem('authToken');
 
 const apiRequest = async (endpoint: string, options: RequestInit = {}) => {
@@ -48,6 +50,8 @@ const apiRequest = async (endpoint: string, options: RequestInit = {}) => {
     delete headers['Content-Type'];
   }
 
+  console.log(`API Request: ${url}`, config); // Debug log
+
   try {
     const response = await fetch(url, config);
 
@@ -72,6 +76,7 @@ const apiRequest = async (endpoint: string, options: RequestInit = {}) => {
       return response.text();
     }
   } catch (error) {
+    console.error('API Request Error:', error);
     if (error instanceof Error) {
       throw error;
     }
@@ -94,7 +99,6 @@ export const authAPI = {
       body: JSON.stringify({ email, password }),
     });
     
-    // Automatically set token on login
     if (response.access_token) {
       setAuthToken(response.access_token);
     }
@@ -106,10 +110,6 @@ export const authAPI = {
     return apiRequest('/auth/me');
   },
 
-  getUserProfile: async () => {
-    return apiRequest('/auth/profile');
-  },
-
   logout: () => {
     setAuthToken('');
   },
@@ -118,7 +118,7 @@ export const authAPI = {
     await apiRequest('/auth/delete', {
       method: 'DELETE',
     });
-    setAuthToken(''); // Clear token after account deletion
+    setAuthToken('');
   },
 };
 
@@ -150,10 +150,9 @@ export const recipesAPI = {
 
     const data = await response.json();
     
-    // Ensure all recipes have the required fields
     return data.recipes.map((recipe: any) => ({
       ...recipe,
-      id: recipe.id.toString(), // Ensure ID is string for consistency
+      id: recipe.id?.toString() || Math.random().toString(),
       matchScore: recipe.match_score || 1.0,
       matchingIngredients: recipe.matching_ingredients || [],
       is_favorited: recipe.is_favorited || false,
@@ -181,7 +180,7 @@ export const recipesAPI = {
     
     return data.recipes.map((recipe: any) => ({
       ...recipe,
-      id: recipe.id.toString(),
+      id: recipe.id?.toString() || Math.random().toString(),
       is_favorited: recipe.is_favorited || false,
       user_rating: recipe.user_rating || 0,
       average_rating: recipe.average_rating || 0,
@@ -197,7 +196,7 @@ export const recipesAPI = {
     
     return {
       ...recipe,
-      id: recipe.id.toString(),
+      id: recipe.id?.toString() || Math.random().toString(),
       is_favorited: recipe.is_favorited || false,
       user_rating: recipe.user_rating || 0,
       average_rating: recipe.average_rating || 0,
@@ -210,10 +209,9 @@ export const recipesAPI = {
       method: 'POST',
     });
     
-    // Return both the state and message
     return {
       is_favorited: response.is_favorited,
-      message: response.message
+      message: response.message || 'Favorite status updated'
     };
   },
 
@@ -224,7 +222,7 @@ export const recipesAPI = {
     
     return {
       ...recipe,
-      id: recipe.id.toString(),
+      id: recipe.id?.toString() || Math.random().toString(),
       is_favorited: recipe.is_favorited || false,
       user_rating: recipe.user_rating || 0,
       average_rating: recipe.average_rating || 0,
@@ -236,7 +234,7 @@ export const recipesAPI = {
     const data = await apiRequest(`/recommendations?limit=${limit}`);
     return data.recipes.map((recipe: any) => ({
       ...recipe,
-      id: recipe.id.toString(),
+      id: recipe.id?.toString() || Math.random().toString(),
       is_favorited: recipe.is_favorited || false,
       user_rating: recipe.user_rating || 0,
       average_rating: recipe.average_rating || 0,
@@ -250,7 +248,7 @@ export const recipesAPI = {
     const data = await apiRequest(`/popular?limit=${limit}`);
     return data.recipes.map((recipe: any) => ({
       ...recipe,
-      id: recipe.id.toString(),
+      id: recipe.id?.toString() || Math.random().toString(),
       is_favorited: recipe.is_favorited || false,
       user_rating: recipe.user_rating || 0,
       average_rating: recipe.average_rating || 0,
@@ -265,8 +263,8 @@ export const favoritesAPI = {
     const data = await apiRequest('/favorites');
     return data.recipes.map((recipe: any) => ({
       ...recipe,
-      id: recipe.id.toString(),
-      is_favorited: true, // These are favorites by definition
+      id: recipe.id?.toString() || Math.random().toString(),
+      is_favorited: true,
       user_rating: recipe.user_rating || 0,
       average_rating: recipe.average_rating || 0,
       rating_count: recipe.rating_count || 0,
@@ -303,28 +301,6 @@ export const analyzeAPI = {
   },
 };
 
-// Stats and Info API
-export const infoAPI = {
-  getStats: async () => {
-    return apiRequest('/stats');
-  },
-
-  getCuisines: async () => {
-    const data = await apiRequest('/cuisines');
-    return data.cuisines || [];
-  },
-
-  getDietaryTags: async () => {
-    const data = await apiRequest('/dietary-tags');
-    return data.dietary_tags || [];
-  },
-
-  getDifficulties: async () => {
-    const data = await apiRequest('/difficulties');
-    return data.difficulties || [];
-  },
-};
-
 // Health check API
 export const healthAPI = {
   check: async () => {
@@ -340,23 +316,6 @@ export const healthAPI = {
       return false;
     }
   },
-
-  getAPIInfo: async () => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-      if (response.ok) {
-        return response.json();
-      }
-      return null;
-    } catch {
-      return null;
-    }
-  },
 };
 
 // Utility function to check if user is authenticated
@@ -369,98 +328,14 @@ export const clearAuth = (): void => {
   setAuthToken('');
 };
 
-// Utility function to handle API errors consistently
-export const handleAPIError = (error: unknown): string => {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return 'An unexpected error occurred';
-};
-
-// Type definitions for better TypeScript support
-export interface Recipe {
-  id: string;
-  title: string;
-  description: string;
-  image_url: string;
-  difficulty: string;
-  cooking_time: number;
-  servings: number;
-  cuisine: string;
-  calories: number;
-  protein: number;
-  carbs: number;
-  fat: number;
-  ingredients: Array<{
-    name: string;
-    amount: string;
-    unit: string;
-  }>;
-  instructions: string[];
-  dietary_tags: string[];
-  is_favorited: boolean;
-  user_rating: number;
-  average_rating: number;
-  rating_count: number;
-  matchScore?: number;
-  matchingIngredients?: string[];
-  recommendationScore?: number;
-  enhanced?: boolean;
-  adjusted_servings?: number;
-  original_servings?: number;
-}
-
-export interface User {
-  id: number;
-  email: string;
-  full_name?: string;
-  created_at: string;
-}
-
-export interface UserProfile {
-  user: User;
-  stats: {
-    favorite_count: number;
-    rating_count: number;
-    avg_rating_given: number;
-    favorite_cuisines: string[];
-  };
-}
-
-export interface SearchResponse {
-  recipes: Recipe[];
-}
-
-export interface FavoriteResponse {
-  is_favorited: boolean;
-  message: string;
-}
-
-export interface ImageAnalysisResponse {
-  ingredients: string[];
-  confidence_scores: number[];
-  message: string;
-  analyzed_image: string;
-}
-
-export interface StatsResponse {
-  total_recipes: number;
-  enhanced_recipes: number;
-  cuisines: Record<string, number>;
-  difficulties: Record<string, number>;
-  dietary_tags: Record<string, number>;
-}
-
 export default {
   authAPI,
   recipesAPI,
   favoritesAPI,
   analyzeAPI,
-  infoAPI,
   healthAPI,
   setAuthToken,
   getAuthToken,
   isAuthenticated,
   clearAuth,
-  handleAPIError,
 };
