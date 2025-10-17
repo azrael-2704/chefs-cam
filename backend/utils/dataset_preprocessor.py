@@ -56,9 +56,40 @@ class DatasetPreprocessor:
         """Process a single recipe row"""
         # Extract basic information
         title = self._clean_text(row.get('Title', f'Recipe {index}'))
-        ingredients_text = row.get('Cleaned_Ingredients', '') or row.get('Ingredients', '')
+        # Prefer the raw Ingredients column (keeps quantities) and fall back to Cleaned_Ingredients
+        ingredients_text = row.get('Ingredients', '') or row.get('Cleaned_Ingredients', '')
         instructions_text = row.get('Instructions', '')
         image_name = row.get('Image_Name', '')
+
+        # Use numeric fields from CSV when available
+        try:
+            csv_id = int(row.get('id')) if not pd.isna(row.get('id')) else (index + 1)
+        except Exception:
+            csv_id = index + 1
+        try:
+            csv_servings = int(row.get('Servings')) if not pd.isna(row.get('Servings')) else 4
+        except Exception:
+            csv_servings = 4
+        try:
+            csv_cooking = int(row.get('Cooking_time')) if not pd.isna(row.get('Cooking_time')) else 30
+        except Exception:
+            csv_cooking = 30
+        try:
+            csv_calories = float(row.get('Calories')) if not pd.isna(row.get('Calories')) else 0
+        except Exception:
+            csv_calories = 0
+        try:
+            csv_protein = float(row.get('Protein')) if not pd.isna(row.get('Protein')) else 0
+        except Exception:
+            csv_protein = 0
+        try:
+            csv_carbs = float(row.get('Carbs')) if not pd.isna(row.get('Carbs')) else 0
+        except Exception:
+            csv_carbs = 0
+        try:
+            csv_fat = float(row.get('Fat')) if not pd.isna(row.get('Fat')) else 0
+        except Exception:
+            csv_fat = 0
         
         # Skip recipes without essential information
         if not ingredients_text or not instructions_text:
@@ -76,18 +107,18 @@ class DatasetPreprocessor:
         
         # Create recipe structure
         recipe = {
-            'id': index + 1,
+            'id': csv_id,
             'title': title,
             'description': self._generate_description(title, ingredients),
             'image_url': self._get_image_url(image_name, title),
-            'difficulty': 'Medium',  # Will be enhanced by Gemini
-            'cooking_time': 30,  # Will be enhanced by Gemini
-            'servings': 4,  # Default servings
-            'cuisine': self._infer_cuisine(title, ingredients),
-            'calories': 0,  # Will be enhanced by Gemini
-            'protein': 0,  # Will be enhanced by Gemini
-            'carbs': 0,  # Will be enhanced by Gemini
-            'fat': 0,  # Will be enhanced by Gemini
+            'difficulty': row.get('Difficulty') or 'Medium',
+            'cooking_time': csv_cooking,
+            'servings': csv_servings,
+            'cuisine': row.get('Cuisine') or self._infer_cuisine(title, ingredients),
+            'calories': csv_calories,
+            'protein': csv_protein,
+            'carbs': csv_carbs,
+            'fat': csv_fat,
             'ingredients': ingredients,
             'instructions': instructions,
             'dietary_tags': self._infer_dietary_tags(ingredients),

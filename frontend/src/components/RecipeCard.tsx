@@ -37,7 +37,8 @@ export function RecipeCard({
       const response = await recipesAPI.toggleFavorite(parseInt(recipe.id));
       
       // Update local state
-      toggleFavorite(recipe.id);
+      // Set favorite to the state returned by the server to avoid desync
+      toggleFavorite(recipe.id, response.is_favorited);
       
       // Update recipe data if callback provided
       if (onUpdate) {

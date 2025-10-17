@@ -283,8 +283,9 @@ def toggle_favorite(
         if not recipe:
             raise HTTPException(status_code=404, detail="Recipe not found")
         
-        favorite = services.toggle_favorite(db, current_user.id, recipe_id)
-        return {"is_favorited": favorite is not None}
+    # services.toggle_favorite returns True when added, False when removed
+    favorite = services.toggle_favorite(db, current_user.id, recipe_id)
+    return {"is_favorited": bool(favorite)}
     
     except HTTPException:
         raise

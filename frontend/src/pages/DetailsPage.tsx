@@ -15,13 +15,54 @@ export function DetailsPage() {
   const [isRating, setIsRating] = useState(false);
   const [isFavoriting, setIsFavoriting] = useState(false);
   const [currentRecipe, setCurrentRecipe] = useState(selectedRecipe);
+  const [originalIngredients, setOriginalIngredients] = useState<any[] | null>(null);
+  const [originalNutrition, setOriginalNutrition] = useState<{calories:number,protein:number,carbs:number,fat:number} | null>(null);
 
   // Update local state when selectedRecipe changes
   useEffect(() => {
     if (selectedRecipe) {
-      setCurrentRecipe(selectedRecipe);
+      // Normalize ingredients into objects with name, amount, unit
+      const normalizeInitial = (rawIngredients: any) => {
+        if (!rawIngredients) return [];
+        // If already objects with name/amount, return as-is
+        if (Array.isArray(rawIngredients) && rawIngredients.length > 0 && typeof rawIngredients[0] === 'object') {
+          return rawIngredients;
+        }
+        // If a single string with commas, split
+        let items: any[] = Array.isArray(rawIngredients) ? rawIngredients : [rawIngredients];
+        if (items.length === 1 && typeof items[0] === 'string' && items[0].includes(',')) {
+          items = items[0].split(',');
+        }
+        return items.map((it: any) => {
+          if (typeof it === 'string') {
+            const s = it.trim();
+            // try to match amount at start
+            const m = s.match(/^\s*(\d+(?:\s+\d+\/\d+|\/\d+|\.\d+)?)\s*([a-zA-Z]+)?\s+(.*)$/);
+            if (m) {
+              return { name: m[3].trim(), amount: m[1].trim(), unit: m[2] || '' };
+            }
+            return { name: s, amount: '', unit: '' };
+          }
+          return it;
+        });
+      };
+
+      const normalized = normalizeInitial(selectedRecipe.ingredients);
+      setOriginalIngredients(normalized);
+      setOriginalNutrition({
+        calories: Number(selectedRecipe.calories || 0),
+        protein: Number(selectedRecipe.protein || 0),
+        carbs: Number(selectedRecipe.carbs || 0),
+        fat: Number(selectedRecipe.fat || 0),
+      });
+
+      setCurrentRecipe({
+        ...selectedRecipe,
+        ingredients: normalized,
+        original_servings: Number(selectedRecipe.servings || selectedRecipe.original_servings || 4)
+      });
       setUserRating(selectedRecipe.user_rating || 0);
-      setServings(selectedRecipe.servings || 4);
+      setServings(Number(selectedRecipe.servings || 4));
     }
   }, [selectedRecipe]);
 
@@ -50,8 +91,9 @@ export function DetailsPage() {
     setIsFavoriting(true);
     try {
       const response = await recipesAPI.toggleFavorite(parseInt(currentRecipe.id));
-      toggleFavorite(currentRecipe.id);
-      
+      // Update shared favorites state with explicit server value
+      toggleFavorite(currentRecipe.id, response.is_favorited);
+
       // Update local recipe state
       setCurrentRecipe({
         ...currentRecipe,
@@ -92,20 +134,138 @@ export function DetailsPage() {
     }
   };
 
+  // Parse amount strings like "1 1/2", "1/2", "2.5" into numbers
+  const parseAmount = (amountStr: any): number => {
+    if (!amountStr && amountStr !== 0) return 0;
+    const s = String(amountStr).trim();
+    if (s === '' || s.toLowerCase().includes('to taste')) return 0;
+
+    // Mixed number like '1 1/2'
+    if (/^\d+\s+\d+\/\d+$/.test(s)) {
+      const [whole, frac] = s.split(' ');
+      const [num, den] = frac.split('/').map(Number);
+      return Number(whole) + num / den;
+    }
+
+    // Simple fraction '1/2'
+    if (/^\d+\/\d+$/.test(s)) {
+      const [num, den] = s.split('/').map(Number);
+      return num / den;
+    }
+
+    // Decimal or integer
+    const n = Number(s);
+    if (!Number.isNaN(n)) return n;
+
+    // fallback 0
+    return 0;
+  };
+
+  const formatAmount = (n: number): string => {
+    if (n === 0) return '0';
+    if (Number.isInteger(n)) return String(n);
+    const common = {
+      0.125: '1/8', 0.25: '1/4', 0.3333333333: '1/3', 0.5: '1/2', 0.6666666667: '2/3', 0.75: '3/4', 0.875: '7/8'
+    };
+    for (const [k, v] of Object.entries(common)) {
+      if (Math.abs(n - Number(k)) < 0.02) return v;
+    }
+    return String(Math.round(n * 10) / 10);
+  };
+
+  const adjustIngredientsLocally = (ingredients: any[], originalServings: number, desiredServings: number) => {
+    // Normalize ingredients into objects with { name, amountStr, unit }
+    const normalize = (raw: any): Array<{ name: string; amountStr: string; unit: string }> => {
+      let items: any[] = Array.isArray(raw) ? raw : [raw];
+      // If there's a single string containing commas, split it
+      if (items.length === 1 && typeof items[0] === 'string' && items[0].includes(',')) {
+        items = items[0].split(',');
+      }
+
+      const out: Array<{ name: string; amountStr: string; unit: string }> = [];
+      for (const it of items) {
+        if (!it) continue;
+        let s = typeof it === 'string' ? it.trim() : '';
+        if (!s && typeof it === 'object') {
+          // object from backend
+          const name = it.name || '';
+          out.push({ name: name.trim(), amountStr: (it.amount || '').toString(), unit: it.unit || '' });
+          continue;
+        }
+
+        // Try to parse leading amount and unit from string: e.g. '1 lb chicken' or '8 cups chicken broth'
+        const m = s.match(/^\s*(\d+(?:\s+\d+\/\d+|\/\d+|\.\d+)?)\s*([a-zA-Z]+)?\s+(.*)$/);
+        if (m) {
+          const amountStr = m[1];
+          const unit = m[2] || '';
+          const name = m[3] || '';
+          out.push({ name: name.trim(), amountStr: amountStr.trim(), unit: unit.trim() });
+        } else {
+          // No leading amount, treat whole string as name
+          out.push({ name: s.trim(), amountStr: '', unit: '' });
+        }
+      }
+      return out;
+    };
+
+  const normalized = normalize(ingredients);
+
+    return normalized.map((ing) => {
+      const parsed = parseAmount(ing.amountStr || '');
+      if (parsed > 0) {
+        const perServing = parsed / (originalServings || 1);
+        const adjusted = perServing * desiredServings;
+        return { name: ing.name, amount: formatAmount(adjusted), unit: ing.unit };
+      }
+      return { name: ing.name, amount: '', unit: '' };
+    });
+  };
+
   const handleServingsChange = async (newServings: number) => {
     if (newServings < 1) return;
-    
+    // Always update UI servings counter
     setServings(newServings);
-    
-    // If servings change significantly, reload recipe with adjusted servings
-    if (Math.abs(newServings - currentRecipe.servings) > 2) {
+
+    const original = (currentRecipe && currentRecipe.original_servings) ? Number(currentRecipe.original_servings) : Number(currentRecipe.servings || 4);
+
+    // For typical small adjustments (2-7 range) adjust locally for snappy UX
+    if (newServings >= 2 && newServings <= 7) {
       try {
-        const adjustedRecipe = await recipesAPI.getById(parseInt(currentRecipe.id), newServings);
-        setCurrentRecipe(adjustedRecipe);
+        // Use originalIngredients (never mutated) as the source so adjustments don't stack
+        const sourceIngredients = originalIngredients || currentRecipe.ingredients || [];
+        const adjustedIngredients = adjustIngredientsLocally(sourceIngredients, original, newServings);
+        // Adjust nutrition from originalNutrition (never mutated)
+        const origNut = originalNutrition || { calories: Number(currentRecipe.calories || 0), protein: Number(currentRecipe.protein || 0), carbs: Number(currentRecipe.carbs || 0), fat: Number(currentRecipe.fat || 0) };
+        const multiplier = newServings / (original || 1);
+        const adjustedNutrition = {
+          calories: Math.round(origNut.calories * multiplier),
+          protein: Math.round(origNut.protein * multiplier),
+          carbs: Math.round(origNut.carbs * multiplier),
+          fat: Math.round(origNut.fat * multiplier),
+        };
+
+        setCurrentRecipe({
+          ...currentRecipe,
+          ingredients: adjustedIngredients,
+          adjusted_servings: newServings,
+          original_servings: original,
+          ...adjustedNutrition
+        });
       } catch (err) {
-        console.error('Error loading adjusted recipe:', err);
-        // Fallback to local calculation
+        console.error('Local ingredient adjustment failed:', err);
       }
+      return;
+    }
+
+    // Otherwise, fetch adjusted recipe from backend
+    try {
+      const adjustedRecipe = await recipesAPI.getById(parseInt(currentRecipe.id), newServings);
+      setCurrentRecipe(adjustedRecipe);
+    } catch (err) {
+      console.error('Error loading adjusted recipe:', err);
+      // Fallback to local calculation
+      const adjustedIngredients = adjustIngredientsLocally(currentRecipe.ingredients, original, newServings);
+      setCurrentRecipe({ ...currentRecipe, ingredients: adjustedIngredients, adjusted_servings: newServings, original_servings: original });
     }
   };
 
@@ -312,7 +472,7 @@ export function DetailsPage() {
                 </div>
 
                 <div className="space-y-3">
-                  {currentRecipe.ingredients.map((ingredient, index) => (
+                  {currentRecipe.ingredients.map((ingredient: any, index: number) => (
                     <div
                       key={index}
                       className="flex items-center gap-4 p-4 bg-gradient-to-r from-amber-50 to-orange-50 rounded-xl hover:shadow-md transition-shadow"
@@ -320,7 +480,7 @@ export function DetailsPage() {
                       <div className="w-2 h-2 bg-gradient-to-r from-amber-500 to-orange-500 rounded-full" />
                       <span className="text-lg text-gray-900">
                         <span className="font-semibold">
-                          {ingredient.amount} {ingredient.unit}
+                          {ingredient.amount ? `${ingredient.amount} ${ingredient.unit}` : ''}
                         </span>{' '}
                         {ingredient.name}
                       </span>
