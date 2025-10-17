@@ -1,7 +1,9 @@
 import { createContext, useContext, useState, ReactNode } from 'react';
-import { Recipe, RecipeFilters, Page } from '../types';
+import { Recipe, RecipeFilters, Page, User } from '../types';
+import { useAuth } from './AuthContext';
 
 interface AppContextType {
+  user: User | null;
   currentPage: Page;
   setCurrentPage: (page: Page) => void;
   selectedRecipe: Recipe | null;
@@ -19,6 +21,7 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export function AppProvider({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
   const [currentPage, setCurrentPage] = useState<Page>('home');
   const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
   const [searchIngredients, setSearchIngredients] = useState<string[]>([]);
@@ -41,6 +44,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   return (
     <AppContext.Provider
       value={{
+        user,
         currentPage,
         setCurrentPage,
         selectedRecipe,
