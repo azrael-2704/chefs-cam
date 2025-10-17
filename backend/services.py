@@ -7,7 +7,7 @@ import json
 import google.generativeai as genai
 import os
 import time
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from utils.cache_manager import RecipeCache
 from utils.recipe_matcher import RecipeMatcher
 from utils.dataset_preprocessor import DatasetPreprocessor
@@ -237,11 +237,25 @@ def _construct_image_url(recipe_data: dict) -> dict:
                 recipe_data['image_url'] = '/' + image_filename
             return recipe_data
 
-        # Otherwise treat value as a filename. If the images_dir is mounted and file exists, return relative /static path
+        # Otherwise treat value as a filename. Be robust to values that include a path
         try:
-            candidate_path = os.path.join(images_dir, image_filename)
-            if os.path.exists(candidate_path):
-                recipe_data['image_url'] = f"/static/{image_filename}"
+            # Use basename so values like 'dataset/food-images/foo.jpg' or 'food-images/foo.jpg' still match
+            image_basename = os.path.basename(image_filename)
+            candidate_paths = [
+                os.path.join(images_dir, image_basename),
+                os.path.join(images_dir, image_filename),
+            ]
+            found = False
+            for candidate in candidate_paths:
+                try:
+                    if os.path.exists(candidate):
+                        recipe_data['image_url'] = f"/static/{image_basename}"
+                        found = True
+                        break
+                except Exception:
+                    # ignore and continue checking other candidates
+                    continue
+            if found:
                 return recipe_data
         except Exception:
             # If filesystem checks fail, continue to try constructing absolute URL
@@ -252,16 +266,19 @@ def _construct_image_url(recipe_data: dict) -> dict:
             backend_base = getattr(settings, 'BACKEND_BASE_URL', None)
             if backend_base:
                 backend_base = backend_base.rstrip('/')
-                recipe_data['image_url'] = f"{backend_base}/static/{image_filename}"
+                # Use the basename when constructing external URL to avoid doubling paths
+                image_basename = os.path.basename(image_filename)
+                recipe_data['image_url'] = f"{backend_base}/static/{image_basename}"
+                logger.debug(f"Constructed backend image URL for {image_basename}")
                 return recipe_data
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to construct backend image URL: {e}")
 
         # Last resort: leave whatever was provided (frontend will fall back to placeholder)
         recipe_data['image_url'] = image_filename
     return recipe_data
 
-def get_recipe_with_adjusted_servings(db: Session, recipe_id: int, desired_servings: int = None, user_id: int = None):
+def get_recipe_with_adjusted_servings(db: Session, recipe_id: int, desired_servings: Optional[int] = None, user_id: Optional[int] = None):
     """Get recipe with optional serving size adjustment - with user data"""
     recipe = db.query(models.Recipe).filter(models.Recipe.id == recipe_id).first()
     if not recipe:
@@ -332,8 +349,8 @@ def get_recipe_with_adjusted_servings(db: Session, recipe_id: int, desired_servi
 def search_recipes_by_ingredients(
     db: Session,
     ingredients: List[str],
-    dietary_preferences: List[str] = None,
-    user_id: int = None,
+    dietary_preferences: Optional[List[str]] = None,
+    user_id: Optional[int] = None,
     top_n_gemini: int = 5
 ):
     """Search recipes with caching and user-specific data"""
@@ -410,8 +427,18 @@ def search_recipes_by_ingredients(
 
                 # Add user-specific data if user is provided
                 if user_id:
-                    recipe['is_favorited'] = is_recipe_favorited(db, user_id, recipe.get('id'))
-                    recipe['user_rating'] = get_user_rating(db, user_id, recipe.get('id'))
+                    recipe_id_val = recipe.get('id')
+                    if recipe_id_val is not None:
+                        try:
+                            rid = int(recipe_id_val)
+                        except Exception:
+                            rid = None
+                    else:
+                        rid = None
+
+                    if rid is not None:
+                        recipe['is_favorited'] = is_recipe_favorited(db, user_id, rid)
+                        recipe['user_rating'] = get_user_rating(db, user_id, rid)
 
                 enhanced_recipes.append(_construct_image_url(recipe))
             except Exception as inner_e:
@@ -430,7 +457,7 @@ def search_recipes_by_ingredients(
     logger.info(f"Found {len(enhanced_recipes)} matching recipes")
     return enhanced_recipes
 
-def get_filtered_recipes(db: Session, dietary: str = None, difficulty: str = None, cuisine: str = None, cooking_time: str = None, user_id: int = None):
+def get_filtered_recipes(db: Session, dietary: Optional[str] = None, difficulty: Optional[str] = None, cuisine: Optional[str] = None, cooking_time: Optional[str] = None, user_id: Optional[int] = None):
     """Get recipes with filters and user-specific data"""
     filtered_recipes = DATASET_RECIPES.copy()
     
@@ -456,8 +483,13 @@ def get_filtered_recipes(db: Session, dietary: str = None, difficulty: str = Non
     # Add user-specific data if user is provided
     if user_id:
         for recipe in filtered_recipes:
-            recipe['is_favorited'] = is_recipe_favorited(db, user_id, recipe['id'])
-            recipe['user_rating'] = get_user_rating(db, user_id, recipe['id'])
+            try:
+                rid = int(recipe.get('id'))
+            except Exception:
+                rid = None
+            if rid is not None:
+                recipe['is_favorited'] = is_recipe_favorited(db, user_id, rid)
+                recipe['user_rating'] = get_user_rating(db, user_id, rid)
     
     return [_construct_image_url(r) for r in filtered_recipes]
 
@@ -701,7 +733,7 @@ def populate_database_from_csv(db: Session):
     else:
         logger.info("Database already contains recipes. Skipping population.")
 
-def get_all_recipes(db: Session, user_id: int = None):
+def get_all_recipes(db: Session, user_id: Optional[int] = None):
     """Get all recipes with optional user-specific data"""
     recipes = []
     for recipe_data in DATASET_RECIPES:
@@ -710,14 +742,20 @@ def get_all_recipes(db: Session, user_id: int = None):
             recipes.append(recipe)
     return recipes
 
-def get_recipe_by_id(db: Session, recipe_id: int, user_id: int = None):
+def get_recipe_by_id(db: Session, recipe_id: int, user_id: Optional[int] = None):
     """Get a specific recipe by ID with user-specific data"""
     return get_recipe_with_adjusted_servings(db, recipe_id, user_id=user_id)
 
 def clear_cache():
     """Clear the recipe cache"""
-    recipe_cache.clear_cache()
-    logger.info("Recipe cache cleared")
+    try:
+        if hasattr(recipe_cache, 'clear_cache'):
+            recipe_cache.clear_cache()
+            logger.info("Recipe cache cleared")
+        else:
+            logger.info("Recipe cache has no clear_cache method; skipping clear")
+    except Exception as e:
+        logger.error(f"Failed to clear cache: {e}")
 
 def health_check(db: Session):
     """Perform health check of the service"""
@@ -731,8 +769,13 @@ def health_check(db: Session):
         # Check Gemini API
         gemini_status = bool(settings.GEMINI_API_KEY and get_available_gemini_model())
         
-        # Check cache
-        cache_status = recipe_cache.is_healthy()
+        # Check cache (defensive)
+        cache_status = False
+        try:
+            if hasattr(recipe_cache, 'is_healthy'):
+                cache_status = recipe_cache.is_healthy()
+        except Exception:
+            cache_status = False
         
         return {
             "status": "healthy",
