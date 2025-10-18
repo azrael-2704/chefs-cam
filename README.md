@@ -1,17 +1,16 @@
 # Smart Recipe Generator 🍳
 
-An intelligent recipe recommendation system that suggests personalized recipes based on the ingredients you have available. Built with modern web technologies and AI-powered enhancements.
+An intelligent recipe recommendation system that suggests personalized recipes based on the ingredients you have. Built with a modern tech stack including FastAPI, React, and Google's Gemini AI for smart features.
 
-![Food Image](https://images.pexels.com/photos/1640770/pexels-photo-1640770.jpeg)
+![Chef's Cam App Screenshot](https://raw.githubusercontent.com/adrianhajdin/smart_recipe_generator/main/frontend/public/project-thumbnail.png)
 
 ---
 
 ## 🌟 Features
 
 - **Smart Ingredient Matching:** Find recipes based on ingredients you have.
-- **AI-Powered Enhancements:** Automatic nutritional data and cooking information via Gemini AI.
+- **AI-Powered Image Analysis:** Upload a photo of your ingredients, and let the AI identify them for you.
 - **Dietary Preferences:** Filter by vegetarian, vegan, gluten-free, and more.
-- **Image Analysis:** Upload food photos to automatically detect ingredients.
 - **Personalization:** Save favorites, rate recipes, and get recommendations.
 - **Serving Adjustments:** Dynamically adjust ingredient quantities for any number of servings.
 - **Responsive Design:** Works seamlessly on desktop and mobile devices.
@@ -20,9 +19,9 @@ An intelligent recipe recommendation system that suggests personalized recipes b
 
 ## 🚀 Live Demo
 
-- **Frontend:** [Vercel Deployment](#)
-- **Backend API:** [Render Deployment](#)
-- **API Documentation:** [Interactive Docs](#)
+The application is live and ready to use:
+- **Frontend Application:** [**Chef's Cam on Vercel**](https://chefs-cam.vercel.app/)
+- **Backend API Docs:** The backend is hosted on Render. You can access the interactive API documentation at `https://<your-backend-render-url>/docs`.
 
 ---
 
@@ -39,7 +38,7 @@ An intelligent recipe recommendation system that suggests personalized recipes b
 - FastAPI with Python  
 - SQLite with SQLAlchemy ORM  
 - JWT authentication  
-- Google Gemini AI for recipe enhancement  
+- Google Gemini AI for image analysis  
 - Scikit-learn for TF-IDF matching  
 - Pillow for image processing  
 
@@ -56,24 +55,20 @@ An intelligent recipe recommendation system that suggests personalized recipes b
 smart-recipe-generator/
 ├── frontend/
 │   ├── src/
-│   │   ├── components/      # Reusable UI components
-│   │   ├── pages/           # Page components
-│   │   ├── context/         # State management
-│   │   ├── lib/             # API utilities
-│   │   └── types/           # TypeScript definitions
+│   │   ├── components/      # Reusable React UI components (buttons, cards, etc.)
+│   │   ├── pages/           # Main pages of the application (Home, RecipeDetails, etc.)
+│   │   ├── context/         # React Context for global state management (e.g., auth)
+│   │   ├── lib/             # Utility functions, including the API client
+│   │   └── types/           # TypeScript type definitions for the project
 │   └── package.json
 ├── backend/
 │   ├── dataset/             # Recipe data and images
-│   ├── utils/               # Core utilities
-│   │   ├── cache_manager.py
-│   │   ├── recipe_matcher.py
-│   │   ├── dataset_preprocessor.py
-│   │   └── serving_calculator.py
-│   ├── models.py            # SQLAlchemy models
-│   ├── schemas.py           # Pydantic schemas
-│   ├── services.py          # Business logic
-│   ├── auth.py              # Authentication
-│   ├── main.py              # FastAPI application
+│   ├── models.py            # SQLAlchemy ORM models for database tables (User, Recipe, etc.)
+│   ├── schemas.py           # Pydantic schemas for data validation and serialization (API request/response shapes)
+│   ├── services.py          # Core business logic (searching, recommendations, database operations)
+│   ├── auth.py              # JWT-based authentication logic (user registration, login, token verification)
+│   ├── database.py          # SQLAlchemy database connection and session management
+│   ├── main.py              # FastAPI application entrypoint, defines all API endpoints
 │   └── requirements.txt
 └── start-app.bat            # Development startup script
 ```
